@@ -1,5 +1,5 @@
-# Laseronset_extract
 %% JF_loadExperiment
+% need to change the laseronset saving location
 
 % you need in workspace:
 % animal
@@ -64,16 +64,9 @@ if timeline_exists
         % Get laser times
     laser_name = 'laserCmd';
     timeline_laser_idx = strcmp({Timeline.hw.inputs.name}, laser_name);
-    laser_trace = Timeline.rawDAQData(:, timeline_laser_idx) ;
-    laser_trace = Timeline.rawDAQData(:, timeline_laser_idx) > 0.05;  % arbitrary threshold 0.05 is too small, have noise going above it leading to misalignment, set as 0.15 to get the laser trace into a binary trace. >0.15 becomes 1, <0.15 becomes 0. Need to change this number if using lower light intensities. You need to find the right threshold to get the onset accurate even when the light is ramping. % laser_trace get a logical matrix according to whether each element are above 0.15 or not.
+    %laser_trace = Timeline.rawDAQData(:, timeline_laser_idx) ;
+    laser_trace = medfilt1(Timeline.rawDAQData(:, timeline_laser_idx),3)>0.07;  % arbitrary threshold 0.05 is too small, have noise going above it leading to misalignment, use medfillter to get rid of the noise. >0.05 becomes 1, <0.05 becomes 0. Need to change this number if using lower light intensities. You need to find the right threshold to get the onset accurate even when the light is ramping. % laser_trace get a logical matrix according to whether each element are above 0.05 or not.
 
-    % get rid of those wrong onsets later with diff_onidx, diff_offidx.
-
-        % get the sequence/block times
-        diff_onidx=[0;diff(laser_flip_onidx)];
-        diff_offidx=[diff(laser_flip_offidx);0];
-        laser_block_flip_start = [laser_flip_onidx(1);laser_flip_onidx(diff_onidx > 300)];
-        laser_block_flip_end=[laser_flip_offidx(diff_offidx > 300);laser_flip_offidx(end)];
 
 %     JF old lines with bugs
 %     laser_flip = [find(~laser_trace(1:end-1) & ...
@@ -93,17 +86,17 @@ if timeline_exists
      laser_flip_off_times = Timeline.rawDAQTimestamps(laser_flip_offidx);
 
 % plot the laser traces.
-                figure();
-                clf;
-                valu = 3254000;
-                title('Laser');
-                hold on;
-                plot(Timeline.rawDAQData(1:valu, timeline_laser_idx))
-                plot(-laser_trace(1:valu))
-                scatter(laser_flip(find(laser_flip <= valu)), ones(size(find(laser_flip <= valu), 1), 1)-1)
-                plot(medfilt1(Timeline.rawDAQData(1:valu, ...
-                    timeline_laser_idx), 3))
-                scatter(laser_seq_flip,ones(size(laser_seq_flip,1),1)*0.05)
+%                 figure();
+%                 clf;
+%                 valu = Timeline.rawDAQSampleCount;
+%                 title('Laser');
+%                 hold on;
+%                 plot(Timeline.rawDAQData(1:valu, timeline_laser_idx))
+%                 plot(-laser_trace(1:valu))
+%                 scatter(laser_flip(find(laser_flip <= valu)), ones(size(find(laser_flip <= valu), 1), 1)-1)
+%                 plot(medfilt1(Timeline.rawDAQData(1:valu, ...
+%                     timeline_laser_idx), 3))
+%                 scatter(laser_seq_flip,ones(size(laser_seq_flip,1),1)*0.05)
 
 
     % Get camera times
@@ -261,7 +254,11 @@ if protocol_exists
 %         laser_block_flip_start = [laser_flip(1); laser_flip(diff_start > 300)];
 %         laser_block_flip_stop = [laser_flip(diff(laser_flip) > 300); laser_flip(end)];
 
-
+% get the sequence/block times
+        diff_onidx=[0;diff(laser_flip_onidx)];
+        diff_offidx=[diff(laser_flip_offidx);0];
+        laser_block_flip_start = [laser_flip_onidx(1);laser_flip_onidx(diff_onidx > 300)];
+        laser_block_flip_end=[laser_flip_offidx(diff_offidx > 300);laser_flip_offidx(end)];
 
         % assign each laser flip to one sequence
         % use the big time between blocks(conditions), 300 samples between
@@ -303,7 +300,7 @@ if protocol_exists
         laserParams.Amp = Protocol.pars(laserAmp_idx, sequenceType_idx)';
         laserParams.Freq = Protocol.pars(laserFreq_idx, sequenceType_idx)';
         laserParams.Ramp = Protocol.pars(laserRamp_idx, sequenceType_idx)';
-        laserParams.Dur = Protocol.pars(laserDur_idx, sequenceType_idx)';
+% %         laserParams.Dur = Protocol.pars(laserDur_idx, sequenceType_idx)';
 
         % get the amp, freq, ramp, etc for all pulses (according to the block number each laseron falls into, which is stored in laser_onBlock)
         % it is weird that we have total 21066 laser on while the repeat
@@ -467,6 +464,11 @@ if ~exist('kilosort_version', 'var') || kilosort_version == 2
 elseif exist('kilosort_version', 'var') && kilosort_version == 1
     [ephys_path, ephys_exists] = AP_cortexlab_filenameJF(animal, date, experiment, 'ephys_ks1', site, recording);
 end
+
+% From 09/05/2022 JF_loadExperiemnt_forXin_withpassive.m
+% Pick kilosort version (2 by default, 1 old if selected)
+
+%     [ephys_path, ephys_exists] = AP_cortexlab_filenameJF(animal, date, experiment, 'ephys', site, recording);
 
 if ephys_exists && load_parts.ephys
 
@@ -694,6 +696,127 @@ if ephys_exists && load_parts.ephys
     spike_templates = new_spike_idx(spike_templates_0idx+1);
 
 end
+
+%% XG cluster laser-on-time depending on the light stimulation conditions
+condNo=Protocol.npfilestimuli; % change according to each exp
+laser_OnBlock_P=transpose(laser_OnBlock);
+laser_flip_on_condidx=zeros(condNo,numel(laser_flip_on_times));
+% for each laser_on_time_j, define whether it belongs to icond or not, and
+% save it into laser_flip_on_condidx
+for icond=1:condNo
+    for j=1:size(laser_flip_on_times,2)
+    laser_flip_on_condidx(icond,j)=(sequenceType_idx(laser_OnBlock_P(j))==icond);
+    end
+end
+
+% save laser_flip_on,laser_flip_on_condidx,laser_flip_times as NPY
+% files
+% output_filepath = 'F:\Raw_data\XG006\2022-06-30\analysis\laseronset';
+% if ~exist(output_filepath, 'dir');
+% mkdir(output_filepath);
+% end
+
+% need to run the alignment (line 606-618 of this script) first to get [co]
+% in order to run the following line
+%recordingtime*co(2)+co(1)=timelinetime, spike_times_timeline = spike_times * co(2) + co(1); so
+%(timelinetime-co(1))/co(2)=recordingtime
+% laser_flip_recordingtime=(laser_flip_times-co(1))/co(2);
+laser_flip_on_recordingtime=(laser_flip_on_times-co(1))/co(2);
+
+% change date
+
+writeNPY(laser_flip_on_recordingtime, 'F:\Raw_data\XG013\2022-08-31\analysis\laseronset\laser_flip_on_time.NPY');
+writeNPY(laser_flip_on_condidx, 'F:\Raw_data\XG013\2022-08-31\analysis\laseronset\laser_flip_on_condidx.NPY');
+
+% writeNPY(laser_flip_on_recordingtime, 'F:\Raw_data\XG008\2022-08-13\analysis\laseronset\laser_flip_on_time.NPY');
+% writeNPY(laser_flip_on_condidx, 'F:\Raw_data\XG008\2022-08-13\analysis\laseronset\laser_flip_on_condidx.NPY');
+
+
+laseronsetcond1=laser_flip_on_recordingtime(find(laser_flip_on_condidx(1,:)));
+writeNPY(laseronsetcond1, 'F:\Raw_data\XG013\2022-08-31\analysis\laseronset\laseronsetcond1.NPY');
+
+laseronsetcond2=laser_flip_on_recordingtime(find(laser_flip_on_condidx(2,:)));
+writeNPY(laseronsetcond2, 'F:\Raw_data\XG013\2022-08-31\analysis\laseronset\laseronsetcond2.NPY');
+
+laseronsetcond3=laser_flip_on_recordingtime(find(laser_flip_on_condidx(3,:)));
+writeNPY(laseronsetcond3, 'F:\Raw_data\XG013\2022-08-31\analysis\laseronset\laseronsetcond3.NPY');
+
+laseronsetcond4=laser_flip_on_recordingtime(find(laser_flip_on_condidx(4,:)));
+writeNPY(laseronsetcond4, 'F:\Raw_data\XG013\2022-08-31\analysis\laseronset\laseronsetcond4.NPY');
+laseronsetcond5=laser_flip_on_recordingtime(find(laser_flip_on_condidx(5,:)));
+writeNPY(laseronsetcond5, 'F:\Raw_data\XG013\2022-08-31\analysis\laseronset\laseronsetcond5.NPY');
+laseronsetcond6=laser_flip_on_recordingtime(find(laser_flip_on_condidx(6,:)));
+writeNPY(laseronsetcond6, 'F:\Raw_data\XG013\2022-08-31\analysis\laseronset\laseronsetcond6.NPY');
+laseronsetcond7=laser_flip_on_recordingtime(find(laser_flip_on_condidx(7,:)));
+writeNPY(laseronsetcond7, 'F:\Raw_data\XG013\2022-08-31\analysis\laseronset\laseronsetcond7.NPY');
+laseronsetcond8=laser_flip_on_recordingtime(find(laser_flip_on_condidx(8,:)));
+writeNPY(laseronsetcond8, 'F:\Raw_data\XG013\2022-08-31\analysis\laseronset\laseronsetcond8.NPY');
+laseronsetcond9=laser_flip_on_recordingtime(find(laser_flip_on_condidx(9,:)));
+writeNPY(laseronsetcond9, 'F:\Raw_data\XG013\2022-08-31\analysis\laseronset\laseronsetcond9.NPY');
+laseronsetcond10=laser_flip_on_recordingtime(find(laser_flip_on_condidx(10,:)));
+writeNPY(laseronsetcond10, 'F:\Raw_data\XG013\2022-08-31\analysis\laseronset\laseronsetcond10.NPY');
+
+laseronsetcond11=laser_flip_on_recordingtime(find(laser_flip_on_condidx(11,:)));
+writeNPY(laseronsetcond11, 'F:\Raw_data\XG013\2022-08-31\analysis\laseronset\laseronsetcond11.NPY');
+
+laseronsetcond12=laser_flip_on_recordingtime(find(laser_flip_on_condidx(12,:)));
+writeNPY(laseronsetcond12, 'F:\Raw_data\XG013\2022-08-31\analysis\laseronset\laseronsetcond12.NPY');
+
+laseronsetcond13=laser_flip_on_recordingtime(find(laser_flip_on_condidx(13,:)));
+writeNPY(laseronsetcond13, 'F:\Raw_data\XG013\2022-08-31\analysis\laseronset\laseronsetcond13.NPY');
+
+laseronsetcond14=laser_flip_on_recordingtime(find(laser_flip_on_condidx(14,:)));
+writeNPY(laseronsetcond14, 'F:\Raw_data\XG013\2022-08-31\analysis\laseronset\laseronsetcond14.NPY');
+laseronsetcond15=laser_flip_on_recordingtime(find(laser_flip_on_condidx(15,:)));
+writeNPY(laseronsetcond15, 'F:\Raw_data\XG013\2022-08-31\analysis\laseronset\laseronsetcond15.NPY');
+laseronsetcond16=laser_flip_on_recordingtime(find(laser_flip_on_condidx(16,:)));
+writeNPY(laseronsetcond16, 'F:\Raw_data\XG013\2022-08-31\analysis\laseronset\laseronsetcond16.NPY');
+laseronsetcond17=laser_flip_on_recordingtime(find(laser_flip_on_condidx(17,:)));
+writeNPY(laseronsetcond17, 'F:\Raw_data\XG013\2022-08-31\analysis\laseronset\laseronsetcond17.NPY');
+laseronsetcond18=laser_flip_on_recordingtime(find(laser_flip_on_condidx(18,:)));
+writeNPY(laseronsetcond18, 'F:\Raw_data\XG013\2022-08-31\analysis\laseronset\laseronsetcond18.NPY');
+laseronsetcond19=laser_flip_on_recordingtime(find(laser_flip_on_condidx(19,:)));
+writeNPY(laseronsetcond19, 'F:\Raw_data\XG013\2022-08-31\analysis\laseronset\laseronsetcond19.NPY');
+laseronsetcond20=laser_flip_on_recordingtime(find(laser_flip_on_condidx(20,:)));
+writeNPY(laseronsetcond20, 'F:\Raw_data\XG013\2022-08-31\analysis\laseronset\laseronsetcond20.NPY');
+
+laseronsetcond21=laser_flip_on_recordingtime(find(laser_flip_on_condidx(21,:)));
+writeNPY(laseronsetcond21, 'F:\Raw_data\XG013\2022-08-31\analysis\laseronset\laseronsetcond21.NPY');
+
+laseronsetcond22=laser_flip_on_recordingtime(find(laser_flip_on_condidx(22,:)));
+writeNPY(laseronsetcond22, 'F:\Raw_data\XG013\2022-08-31\analysis\laseronset\laseronsetcond22.NPY');
+
+laseronsetcond23=laser_flip_on_recordingtime(find(laser_flip_on_condidx(23,:)));
+writeNPY(laseronsetcond23, 'F:\Raw_data\XG013\2022-08-31\analysis\laseronset\laseronsetcond23.NPY');
+
+laseronsetcond24=laser_flip_on_recordingtime(find(laser_flip_on_condidx(24,:)));
+writeNPY(laseronsetcond24, 'F:\Raw_data\XG013\2022-08-31\analysis\laseronset\laseronsetcond24.NPY');
+laseronsetcond25=laser_flip_on_recordingtime(find(laser_flip_on_condidx(25,:)));
+writeNPY(laseronsetcond25, 'F:\Raw_data\XG013\2022-08-31\analysis\laseronset\laseronsetcond25.NPY');
+% laseronsetcond26=laser_flip_on_recordingtime(find(laser_flip_on_condidx(26,:)));
+% writeNPY(laseronsetcond26, 'F:\Raw_data\XG013\2022-08-23\analysis\laseronset\laseronsetcond26.NPY');
+% laseronsetcond27=laser_flip_on_recordingtime(find(laser_flip_on_condidx(27,:)));
+% writeNPY(laseronsetcond27, 'F:\Raw_data\XG013\2022-08-23\analysis\laseronset\laseronsetcond27.NPY');
+% laseronsetcond28=laser_flip_on_recordingtime(find(laser_flip_on_condidx(28,:)));
+% writeNPY(laseronsetcond28, 'F:\Raw_data\XG013\2022-08-23\analysis\laseronset\laseronsetcond28.NPY');
+% laseronsetcond29=laser_flip_on_recordingtime(find(laser_flip_on_condidx(29,:)));
+% writeNPY(laseronsetcond29, 'F:\Raw_data\XG013\2022-08-23\analysis\laseronset\laseronsetcond29.NPY');
+% laseronsetcond30=laser_flip_on_recordingtime(find(laser_flip_on_condidx(30,:)));
+% writeNPY(laseronsetcond30, 'F:\Raw_data\XG013\2022-08-23\analysis\laseronset\laseronsetcond30.NPY');
+% 
+% laseronsetcond31=laser_flip_on_recordingtime(find(laser_flip_on_condidx(31,:)));
+% writeNPY(laseronsetcond31, 'F:\Raw_data\XG013\2022-08-23\analysis\laseronset\laseronsetcond31.NPY');
+
+% laseronsetcond32=laser_flip_on_recordingtime(find(laser_flip_on_condidx(32,:)));
+% writeNPY(laseronsetcond32, 'F:\Raw_data\XG013\2022-08-22\analysis\laseronset\laseronsetcond32.NPY');
+% 
+% laseronsetcond33=laser_flip_on_recordingtime(find(laser_flip_on_condidx(33,:)));
+% writeNPY(laseronsetcond33, 'F:\Raw_data\XG013\2022-08-22\analysis\laseronset\laseronsetcond33.NPY');
+% 
+% laseronsetcond34=laser_flip_on_recordingtime(find(laser_flip_on_condidx(34,:)));
+% writeNPY(laseronsetcond34, 'F:\Raw_data\XG013\2022-08-22\analysis\laseronset\laseronsetcond34.NPY');
+% laseronsetcond35=laser_flip_on_recordingtime(find(laser_flip_on_condidx(35,:)));
+% writeNPY(laseronsetcond35, 'F:\Raw_data\XG013\2022-08-22\analysis\laseronset\laseronsetcond35.NPY');
 
 %% Finished
 if verbose
